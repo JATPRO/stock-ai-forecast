@@ -1,6 +1,9 @@
 joblib
 numpy
 pandas
-gradio
+streamlit
 matplotlib
 tensorflow
+gdown
+scikit-learn
+xgboost
