@@ -8,6 +8,7 @@ from tensorflow.keras.models import load_model
 from datetime import timedelta
 import tempfile
 import gdown
+import glob
 
 # -------------------------------
 # KONFIGURASI HALAMAN
@@ -17,33 +18,38 @@ st.title("📈 Google Stock Forecast Dashboard")
 st.markdown("Mengunduh model dan data dari Google Drive...")
 
 # -------------------------------
-# FUNGSI DOWNLOAD & CACHE
+# FUNGSI DOWNLOAD & CACHE (DIPERBAIKI)
 # -------------------------------
 FOLDER_ID = "1HQIKbA8tkmhOnOlsve3fRuvcZXcD9vzc"
 GDRIVE_URL = f"https://drive.google.com/drive/folders/{FOLDER_ID}"
 
+# Simpan referensi direktori sementara di session_state agar tidak dihapus
+if 'temp_dir_path' not in st.session_state:
+    st.session_state.temp_dir_path = None
+
 @st.cache_resource
 def download_assets():
-    """Download folder dari Google Drive ke temporary directory."""
-    temp_dir = tempfile.TemporaryDirectory()
-    local_path = temp_dir.name
+    """Download folder dari Google Drive ke direktori sementara dan kembalikan path-nya."""
+    # Buat direktori sementara manual (tidak otomatis dihapus oleh objek)
+    temp_path = tempfile.mkdtemp()
+    st.session_state.temp_dir_path = temp_path  # simpan agar tetap ada
 
     with st.spinner("⏳ Mengunduh file dari Google Drive..."):
         try:
-            gdown.download_folder(url=GDRIVE_URL, output=local_path, quiet=False)
+            gdown.download_folder(url=GDRIVE_URL, output=temp_path, quiet=False)
         except Exception as e:
             st.error(f"Gagal mengunduh: {e}")
             return None
 
-    # Tampilkan semua file yang terunduh (opsional untuk debugging)
+    # Tampilkan daftar file yang diunduh (opsional untuk debugging)
     files_list = []
-    for root, _, files in os.walk(local_path):
+    for root, _, files in os.walk(temp_path):
         for f in files:
             files_list.append(os.path.join(root, f))
     with st.expander("📁 File yang diunduh", expanded=False):
         st.write(files_list)
 
-    return local_path
+    return temp_path
 
 SAVE_PATH = download_assets()
 
@@ -51,17 +57,22 @@ SAVE_PATH = download_assets()
 # FUNGSI PENCARIAN FILE CSV
 # -------------------------------
 def find_csv_file(folder):
-    """Mencari file GOOG.csv terlebih dahulu, lalu fallback ke csv lain."""
-    # Prioritas: GOOG.csv di root folder
+    """Mencari file GOOG.csv terlebih dahulu, lalu fallback ke file .csv pertama."""
+    # Verifikasi folder ada
+    if not os.path.isdir(folder):
+        st.error(f"Folder tidak ditemukan: {folder}")
+        return None
+
+    # Cek langsung GOOG.csv
     direct_csv = os.path.join(folder, "GOOG.csv")
     if os.path.isfile(direct_csv):
         return direct_csv
 
-    # Fallback: cari file .csv pertama
-    import glob
+    # Fallback: cari file .csv apa saja secara rekursif
     candidates = glob.glob(os.path.join(folder, "**", "*.csv"), recursive=True)
     if candidates:
         return candidates[0]
+
     return None
 
 # -------------------------------
@@ -114,14 +125,12 @@ def forecast_stock(category, model_choice, days, local_path):
                 temp_input = np.vstack((temp_input[1:], [[stabilized]]))
 
         else:  # Model Ditingkatkan
-            # Muat ketiga model dasar
             m_gru = load_model(os.path.join(local_path, "model_gru.h5"), compile=False)
             m_lstm = load_model(os.path.join(local_path, "model_lstm.h5"), compile=False)
             m_rnn = load_model(os.path.join(local_path, "model_rnn.h5"), compile=False)
             for m in [m_gru, m_lstm, m_rnn]:
                 m.compile(optimizer='adam', loss='mse')
 
-            # Muat model tambahan sesuai pilihan
             if model_choice == "Stacking":
                 meta_path = os.path.join(local_path, "meta_model.pkl")
                 if not os.path.exists(meta_path):
@@ -157,7 +166,6 @@ def forecast_stock(category, model_choice, days, local_path):
         pred_array = np.array(pred_output).reshape(-1, 1)
         inv_pred = sc.inverse_transform(pred_array).flatten()
 
-        # Buat DataFrame hasil
         last_date = df['Date'].iloc[-1]
         date_range = pd.date_range(last_date + timedelta(days=1), periods=len(inv_pred))
         result_df = pd.DataFrame({
@@ -165,7 +173,6 @@ def forecast_stock(category, model_choice, days, local_path):
             'Harga (USD)': inv_pred.round(2)
         })
 
-        # Plot
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(date_range, inv_pred, marker='o', color='#1f77b4', linewidth=2)
         ax.set_title(f"Prediksi Harga Saham Google - {model_choice} ({days} Hari)", fontsize=14)
@@ -189,7 +196,6 @@ if SAVE_PATH is None:
     st.error("❌ Gagal mengunduh aset dari Google Drive. Pastikan folder dibagikan secara publik.")
     st.stop()
 
-# Pilihan input
 col1, col2, col3 = st.columns(3)
 with col1:
     category = st.radio("Kategori Model", ["Model Dasar", "Model Ditingkatkan"], horizontal=True)
