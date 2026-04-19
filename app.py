@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 from tensorflow.keras.models import load_model
 from datetime import timedelta
 import tempfile
-import gdown # <-- Pastikan library ini terinstall (pip install gdown)
+import gdown
+import glob # Untuk mencari file CSV secara otomatis
 
 # -------------------------------
 # SETUP HALAMAN STREAMLIT
@@ -21,10 +22,8 @@ st.markdown("**Status:** Mengunduh model dan data dari Google Drive. Harap tungg
 # -------------------------------
 # ID folder Google Drive Anda
 FOLDER_ID = "1HQIKbA8tkmhOnOlsve3fRuvcZXcD9vzc"
-# URL yang akan diunduh oleh gdown
 GDRIVE_URL = f"https://drive.google.com/drive/folders/{FOLDER_ID}"
 
-# Fungsi ini akan di-cache, sehingga unduhan hanya terjadi sekali
 @st.cache_resource
 def download_and_prepare_assets():
     """Mengunduh folder dari Google Drive ke direktori sementara."""
@@ -33,17 +32,36 @@ def download_and_prepare_assets():
 
     with st.spinner("Sedang mengunduh file model dan data dari Google Drive..."):
         try:
-            # Download seluruh isi folder
             gdown.download_folder(url=GDRIVE_URL, output=download_path, quiet=False)
             st.success("✅ Semua file berhasil diunduh!")
+
+            # --- Debug: Tampilkan daftar file yang diunduh ---
+            files_found = []
+            for root, dirs, files in os.walk(download_path):
+                for file in files:
+                    files_found.append(os.path.join(root, file))
+            
+            if files_found:
+                with st.expander("📁 Lihat daftar file yang diunduh"):
+                    st.write(files_found)
+            else:
+                st.warning("Tidak ada file yang ditemukan setelah unduhan.")
+            # ------------------------------------------------
+
             return download_path
         except Exception as e:
             st.error(f"Gagal mengunduh file dari Google Drive: {e}")
-            st.info("Pastikan folder Google Drive Anda telah dibagikan secara publik (Anyone with the link).")
+            st.info("Pastikan folder Google Drive Anda telah dibagikan secara publik (Anyone with the link) dan ID folder benar.")
             return None
 
-# Jalankan fungsi unduh
 SAVE_PATH = download_and_prepare_assets()
+
+def find_csv_file(folder_path):
+    """Mencari file CSV pertama dalam folder (rekursif)."""
+    csv_files = glob.glob(os.path.join(folder_path, "**", "*.csv"), recursive=True)
+    if csv_files:
+        return csv_files[0]  # Ambil file CSV pertama yang ditemukan
+    return None
 
 # -------------------------------
 # 2. FUNGSI PREDIKSI (DENGAN PATH LOKAL)
@@ -54,11 +72,15 @@ def forecast_stock(category, model_choice, days, local_path):
             st.error("Path lokal tidak valid. Pastikan unduhan dari Google Drive berhasil.")
             return pd.DataFrame(), None
 
-        # Tentukan path CSV
-        csv_path = os.path.join(local_path, 'GOOG.csv')
-        if not os.path.exists(csv_path):
-            st.error(f"File CSV tidak ditemukan di: {csv_path}")
+        # --- Cari file CSV secara otomatis ---
+        csv_path = find_csv_file(local_path)
+        if csv_path is None:
+            st.error(f"Tidak ada file CSV ditemukan di folder unduhan: {local_path}")
+            st.info("Silakan periksa kembali isi folder Google Drive Anda. Pastikan ada file .csv di dalamnya.")
             return pd.DataFrame(), None
+        
+        st.info(f"📄 Menggunakan file CSV: {os.path.basename(csv_path)}")
+        # ------------------------------------
 
         # Muat scaler
         scaler_path = os.path.join(local_path, 'scaler.pkl')
