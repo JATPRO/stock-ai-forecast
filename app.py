@@ -6,48 +6,66 @@ import os
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import load_model
 from datetime import timedelta
+import tempfile
+import gdown # <-- Pastikan library ini terinstall (pip install gdown)
 
 # -------------------------------
 # SETUP HALAMAN STREAMLIT
 # -------------------------------
 st.set_page_config(page_title="Google Stock Predictor Pro", layout="wide")
 st.title("📈 Google Stock Forecast Dashboard")
-st.markdown("**Status:** Aset dimuat dari path lokal. Pastikan file model, scaler, dan CSV tersedia.")
+st.markdown("**Status:** Mengunduh model dan data dari Google Drive. Harap tunggu...")
 
 # -------------------------------
-# SIDEBAR: INPUT PATH
+# 1. INISIALISASI: UNDUH FILE DARI GOOGLE DRIVE
 # -------------------------------
-st.sidebar.header("Konfigurasi Path")
-save_path = st.sidebar.text_input(
-    "Folder penyimpanan model & scaler",
-    value="/content/drive/MyDrive/riset akhir/",  # default dari Colab
-    help="Path ke folder yang berisi model_*.h5, scaler.pkl, meta_model.pkl, xgb_resid.pkl"
-)
-csv_path = st.sidebar.text_input(
-    "Path file CSV data saham",
-    value="/content/drive/MyDrive/riset akhir/GOOG.csv",
-    help="File CSV harus memiliki kolom 'Date' dan 'Close'"
-)
+# ID folder Google Drive Anda
+FOLDER_ID = "1HQIKbA8tkmhOnOlsve3fRuvcZXcD9vzc"
+# URL yang akan diunduh oleh gdown
+GDRIVE_URL = f"https://drive.google.com/drive/folders/{FOLDER_ID}"
 
-st.sidebar.markdown("---")
-st.sidebar.info("Pastikan folder dan file tersebut dapat diakses oleh aplikasi.")
+# Fungsi ini akan di-cache, sehingga unduhan hanya terjadi sekali
+@st.cache_resource
+def download_and_prepare_assets():
+    """Mengunduh folder dari Google Drive ke direktori sementara."""
+    temp_dir = tempfile.TemporaryDirectory()
+    download_path = temp_dir.name
+
+    with st.spinner("Sedang mengunduh file model dan data dari Google Drive..."):
+        try:
+            # Download seluruh isi folder
+            gdown.download_folder(url=GDRIVE_URL, output=download_path, quiet=False)
+            st.success("✅ Semua file berhasil diunduh!")
+            return download_path
+        except Exception as e:
+            st.error(f"Gagal mengunduh file dari Google Drive: {e}")
+            st.info("Pastikan folder Google Drive Anda telah dibagikan secara publik (Anyone with the link).")
+            return None
+
+# Jalankan fungsi unduh
+SAVE_PATH = download_and_prepare_assets()
 
 # -------------------------------
-# FUNGSI PREDIKSI (SAMA SEPERTI SEBELUMNYA)
+# 2. FUNGSI PREDIKSI (DENGAN PATH LOKAL)
 # -------------------------------
-def forecast_stock(category, model_choice, days):
+def forecast_stock(category, model_choice, days, local_path):
     try:
-        # Validasi path
-        if not os.path.exists(csv_path):
-            st.error(f"File CSV tidak ditemukan: {csv_path}")
+        if local_path is None:
+            st.error("Path lokal tidak valid. Pastikan unduhan dari Google Drive berhasil.")
             return pd.DataFrame(), None
-        scaler_file = os.path.join(save_path, 'scaler.pkl')
-        if not os.path.exists(scaler_file):
-            st.error(f"Scaler tidak ditemukan: {scaler_file}")
+
+        # Tentukan path CSV
+        csv_path = os.path.join(local_path, 'GOOG.csv')
+        if not os.path.exists(csv_path):
+            st.error(f"File CSV tidak ditemukan di: {csv_path}")
             return pd.DataFrame(), None
 
         # Muat scaler
-        sc = joblib.load(scaler_file)
+        scaler_path = os.path.join(local_path, 'scaler.pkl')
+        if not os.path.exists(scaler_path):
+            st.error(f"Scaler tidak ditemukan di: {scaler_path}")
+            return pd.DataFrame(), None
+        sc = joblib.load(scaler_path)
 
         # Baca CSV
         df_internal = pd.read_csv(csv_path)
@@ -63,11 +81,11 @@ def forecast_stock(category, model_choice, days):
         blend = 0.3
 
         if category == "Model Dasar":
-            mdl_path = os.path.join(save_path, f'model_{model_choice.lower()}.h5')
-            if not os.path.exists(mdl_path):
-                st.error(f"Model file tidak ditemukan: {mdl_path}")
+            model_path = os.path.join(local_path, f'model_{model_choice.lower()}.h5')
+            if not os.path.exists(model_path):
+                st.error(f"Model tidak ditemukan di: {model_path}")
                 return pd.DataFrame(), None
-            mdl = load_model(mdl_path, compile=False)
+            mdl = load_model(model_path, compile=False)
             mdl.compile(optimizer='adam', loss='mse')
 
             for _ in range(int(days)):
@@ -78,26 +96,16 @@ def forecast_stock(category, model_choice, days):
                 temp_input = np.vstack((temp_input[1:], [[stabilized]]))
 
         else:  # Model Ditingkatkan
-            # Muat ketiga model dasar
-            m_gru = load_model(os.path.join(save_path, 'model_gru.h5'), compile=False)
-            m_lstm = load_model(os.path.join(save_path, 'model_lstm.h5'), compile=False)
-            m_rnn = load_model(os.path.join(save_path, 'model_rnn.h5'), compile=False)
+            m_gru = load_model(os.path.join(local_path, 'model_gru.h5'), compile=False)
+            m_lstm = load_model(os.path.join(local_path, 'model_lstm.h5'), compile=False)
+            m_rnn = load_model(os.path.join(local_path, 'model_rnn.h5'), compile=False)
             for m in [m_gru, m_lstm, m_rnn]:
                 m.compile(optimizer='adam', loss='mse')
 
-            # Muat model meta / residual jika diperlukan
             if model_choice == 'Stacking':
-                meta_path = os.path.join(save_path, 'meta_model.pkl')
-                if not os.path.exists(meta_path):
-                    st.error(f"Meta model tidak ditemukan: {meta_path}")
-                    return pd.DataFrame(), None
-                meta = joblib.load(meta_path)
+                meta = joblib.load(os.path.join(local_path, 'meta_model.pkl'))
             elif model_choice == 'Residual':
-                resid_path = os.path.join(save_path, 'xgb_resid.pkl')
-                if not os.path.exists(resid_path):
-                    st.error(f"XGBoost residual model tidak ditemukan: {resid_path}")
-                    return pd.DataFrame(), None
-                resid_mdl = joblib.load(resid_path)
+                resid_mdl = joblib.load(os.path.join(local_path, 'xgb_resid.pkl'))
 
             for _ in range(int(days)):
                 x_input = temp_input[-window_size:].reshape(1, window_size, 1)
@@ -121,12 +129,10 @@ def forecast_stock(category, model_choice, days):
         res_array = np.array(pred_output).reshape(-1, 1)
         inv_res = sc.inverse_transform(res_array).flatten()
 
-        # Format hasil
         last_date = df_internal['Date'].iloc[-1]
         dates = pd.date_range(last_date + timedelta(days=1), periods=len(inv_res))
         result_df = pd.DataFrame({'Tanggal': dates.strftime('%Y-%m-%d'), 'Harga (USD)': inv_res})
 
-        # Plot
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(dates, inv_res, marker='o', color='blue', label=f'Forecast {model_choice}')
         ax.set_title(f"Prediksi {model_choice} - {days} Hari")
@@ -137,45 +143,46 @@ def forecast_stock(category, model_choice, days):
         return result_df, fig
 
     except Exception as e:
+        import traceback
         st.error(f"Terjadi kesalahan saat prediksi:\n```\n{traceback.format_exc()}\n```")
         return pd.DataFrame(), None
 
 # -------------------------------
-# INTERFACE UTAMA
+# 3. INTERFACE UTAMA
 # -------------------------------
-col1, col2, col3 = st.columns(3)
-with col1:
-    category_input = st.radio(
-        "Kategori Model",
-        options=["Model Dasar", "Model Ditingkatkan"],
-        index=0,
-        horizontal=True
-    )
-with col2:
-    # Dropdown dinamis berdasarkan kategori
-    if category_input == "Model Dasar":
-        model_options = ["LSTM", "GRU", "RNN"]
-        default_model = "GRU"
-    else:
-        model_options = ["Ensemble", "Stacking", "Residual"]
-        default_model = "Stacking"
-    model_input = st.selectbox("Pilih Model", options=model_options, index=model_options.index(default_model))
-with col3:
-    days_input = st.slider("Durasi (Hari)", min_value=1, max_value=365, value=30, step=1)
+if SAVE_PATH:
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        category_input = st.radio(
+            "Kategori Model",
+            options=["Model Dasar", "Model Ditingkatkan"],
+            index=0,
+            horizontal=True
+        )
+    with col2:
+        if category_input == "Model Dasar":
+            model_options = ["LSTM", "GRU", "RNN"]
+            default_model = "GRU"
+        else:
+            model_options = ["Ensemble", "Stacking", "Residual"]
+            default_model = "Stacking"
+        model_input = st.selectbox("Pilih Model", options=model_options, index=model_options.index(default_model))
+    with col3:
+        days_input = st.slider("Durasi (Hari)", min_value=1, max_value=365, value=30, step=1)
 
-predict_btn = st.button("🚀 Mulai Prediksi", type="primary", use_container_width=True)
+    predict_btn = st.button("🚀 Mulai Prediksi", type="primary", use_container_width=True)
 
-# Tempat hasil
-if predict_btn:
-    with st.spinner("Sedang melakukan prediksi... Mohon tunggu."):
-        result_df, fig = forecast_stock(category_input, model_input, days_input)
+    if predict_btn:
+        with st.spinner("Sedang melakukan prediksi... Mohon tunggu."):
+            result_df, fig = forecast_stock(category_input, model_input, days_input, SAVE_PATH)
 
-    if not result_df.empty:
-        st.success("Prediksi berhasil!")
-        st.subheader("📋 Tabel Prediksi")
-        st.dataframe(result_df, use_container_width=True)
-
-        st.subheader("📉 Visualisasi Tren")
-        st.pyplot(fig)
-    else:
-        st.warning("Prediksi gagal. Periksa kembali path atau file yang diperlukan.")
+        if not result_df.empty:
+            st.success("Prediksi berhasil!")
+            st.subheader("📋 Tabel Prediksi")
+            st.dataframe(result_df, use_container_width=True)
+            st.subheader("📉 Visualisasi Tren")
+            st.pyplot(fig)
+        else:
+            st.warning("Prediksi gagal. Periksa kembali file yang diperlukan.")
+else:
+    st.warning("Aplikasi tidak dapat memuat aset dari Google Drive. Silakan periksa kembali koneksi atau ID folder.")
