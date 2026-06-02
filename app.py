@@ -391,7 +391,7 @@ hr { border-color: var(--border) !important; }
 st.markdown("""
 <div class="hero">
   <div class="hero-left">
-    <div class="ticker">NASDAQ · GOOG · AI-Powered Forecast</div>
+    <div class="ticker">NASDAQ · GOOG · Forecast</div>
     <h1>Google Stock<br><span>Forecast</span> Dashboard</h1>
     <div class="subtitle">Deep learning ensemble — LSTM · GRU · RNN · Stacking · Residual</div>
   </div>
@@ -728,7 +728,7 @@ if predict_btn:
             st.markdown("""
             <div class="result-header">
               <h3>📈  Visualisasi Prediksi</h3>
-              <span class="badge">AI Generated</span>
+              <span class="badge">Chart</span>
             </div>
             """, unsafe_allow_html=True)
             st.pyplot(plot_fig)
